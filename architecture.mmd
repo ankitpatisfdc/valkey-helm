@@ -1,0 +1,131 @@
+---
+title: Valkey Cluster Architecture (3 shards x (1 primary + 1 replica) = 6 nodes)
+config:
+  theme: base
+  flowchart:
+    wrappingWidth: 9999
+  themeVariables:
+    background: '#ffffff'
+    primaryColor: '#f5f5f5'
+    primaryTextColor: '#000000'
+    primaryBorderColor: '#000000'
+    lineColor: '#000000'
+    secondaryColor: '#ffffff'
+    tertiaryColor: '#ffffff'
+    mainBkg: '#ffffff'
+    nodeBorder: '#000000'
+    clusterBkg: '#ffffff'
+    clusterBorder: '#000000'
+    titleColor: '#000000'
+    edgeLabelBackground: '#ffffff'
+  layout: elk
+---
+flowchart LR
+    subgraph K8s["Kubernetes Cluster"]
+
+        subgraph Clients["Clients"]
+            direction LR
+            Client["Client Application"]
+            Prometheus["Prometheus"]
+        end
+
+        subgraph Services["Services"]
+            direction LR
+            SVC_CLIENT[["valkey<br>:6379, :16379"]]
+            SVC_HEADLESS[["valkey-headless<br>ClusterIP: None"]]
+            SVC_METRICS[["valkey-metrics<br>:9121"]]
+        end
+
+        subgraph ConfigMaps["ConfigMaps"]
+            direction LR
+            CM_INIT["init-scripts"]
+            CM_CLUSTER["cluster-script"]
+        end
+
+        subgraph STS["StatefulSet: valkey"]
+            direction LR
+
+            subgraph Shard1["Shard 1<br>Slots 0-5460"]
+                direction TB
+                subgraph Pod0["valkey-0"]
+                    M0(("Primary<br>:6379/:16379"))
+                    EX0["exporter :9121"]
+                end
+                subgraph Pod3["valkey-3"]
+                    R0[/"Replica<br>:6379/:16379"/]
+                    EX3["exporter :9121"]
+                end
+                PVC0[("PVC 70Gi")]
+                PVC3[("PVC 70Gi")]
+                Pod0 --- PVC0
+                Pod3 --- PVC3
+                M0 == repl === R0
+            end
+
+            subgraph Shard2["Shard 2<br>Slots 5461-10922"]
+                direction TB
+                subgraph Pod1["valkey-1"]
+                    M1(("Primary<br>:6379/:16379"))
+                    EX1["exporter :9121"]
+                end
+                subgraph Pod4["valkey-4"]
+                    R1[/"Replica<br>:6379/:16379"/]
+                    EX4["exporter :9121"]
+                end
+                PVC1[("PVC 70Gi")]
+                PVC4[("PVC 70Gi")]
+                Pod1 --- PVC1
+                Pod4 --- PVC4
+                M1 == repl === R1
+            end
+
+            subgraph Shard3["Shard 3<br>Slots 10923-16383"]
+                direction TB
+                subgraph Pod2["valkey-2"]
+                    M2(("Primary<br>:6379/:16379"))
+                    EX2["exporter :9121"]
+                end
+                subgraph Pod5["valkey-5"]
+                    R2[/"Replica<br>:6379/:16379"/]
+                    EX5["exporter :9121"]
+                end
+                PVC2[("PVC 70Gi")]
+                PVC5[("PVC 70Gi")]
+                Pod2 --- PVC2
+                Pod5 --- PVC5
+                M2 == repl === R2
+            end
+
+            %% Gossip - full mesh
+            M0 <-. gossip :16379 .-> M1
+            M1 <-. gossip :16379 .-> M2
+            M0 <-. gossip :16379 .-> M2
+        end
+    end
+
+    %% External connections
+    Client -- :6379 --> SVC_CLIENT
+    Prometheus -- :9121 --> SVC_METRICS
+
+    %% Service to StatefulSet
+    SVC_CLIENT --> STS
+    SVC_HEADLESS -. DNS .-> STS
+    SVC_METRICS --> STS
+
+    %% ConfigMap mounts
+    ConfigMaps -.-> STS
+
+    %% Styling
+    classDef primary fill:#3b82f6,stroke:#1e3a8a,color:#fff
+    classDef replica fill:#06b6d4,stroke:#164e63,color:#fff
+    classDef service fill:#f59e0b,stroke:#78350f,color:#000
+    classDef storage fill:#a855f7,stroke:#581c87,color:#fff
+    classDef configmap fill:#22c55e,stroke:#14532d,color:#000
+    classDef exporter fill:#f97316,stroke:#7c2d12,color:#000
+
+    class M0,M1,M2 primary
+    class R0,R1,R2 replica
+    class SVC_CLIENT,SVC_HEADLESS,SVC_METRICS service
+    class PVC0,PVC1,PVC2,PVC3,PVC4,PVC5 storage
+    class CM_INIT,CM_CLUSTER configmap
+    class EX0,EX1,EX2,EX3,EX4,EX5 exporter
