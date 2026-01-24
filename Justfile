@@ -5,6 +5,11 @@ test:
     @echo "=== Running Unit Tests ==="
     helm unittest ./valkey
 
+# Run schema completeness test (ensures all values.yaml properties are in values.schema.json)
+test-schema:
+    @echo "=== Running Schema Completeness Test ==="
+    ./valkey/tests/schema-completeness.test.sh
+
 # Lint the Helm chart
 lint:
     @echo "=== Linting Valkey Helm Chart ==="
