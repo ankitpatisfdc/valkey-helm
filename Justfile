@@ -14,6 +14,11 @@ lint:
     helm lint ./valkey-operator
     helm lint ./valkey-resources
 
+# Ensure values.yaml properties are represented in values.schema.json
+test-schema-completeness:
+    @echo "=== Running Schema Completeness Test ==="
+    ./valkey/tests/schema-completeness.test.sh
+
 # Render templates with default values
 template:
     helm template valkey ./valkey
