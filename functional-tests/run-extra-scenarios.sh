@@ -843,11 +843,10 @@ scenario_rollout_restart_orderly_failover() {
 # Isolation, so a pass can ONLY be attributed to shutdown-on-sigterm:
 #   * preStopFailover.enabled=false — the hook (and its cluster-script mount)
 #     is not even rendered, so it cannot be the cause of any handover.
-#   * nodeTimeout=180000 — cluster-node-timeout auto-failover CANNOT fire in
-#     the few seconds a single graceful pod delete takes, so an observed
-#     role flip is not the cluster promoting a replica after declaring the
-#     primary dead. The only remaining mechanism is the primary handing off
-#     as it processes SIGTERM.
+#   * nodeTimeout=600000 — cluster-node-timeout auto-failover cannot fire
+#     anywhere inside this scenario's bounded waits, so an observed role flip
+#     is not the cluster promoting a replica after declaring the primary dead.
+#     The only remaining mechanism is the primary handing off on SIGTERM.
 #
 # We delete ONE primary pod with the DEFAULT grace period (a normal graceful
 # SIGTERM — NOT --force, which would also bypass shutdown-on-sigterm by
@@ -866,7 +865,7 @@ scenario_shutdown_on_sigterm_failover() {
             --set=cluster.shards=3 \
             --set=cluster.replicasPerShard=1 \
             --set=cluster.preStopFailover.enabled=false \
-            --set=cluster.nodeTimeout=180000 \
+            --set=cluster.nodeTimeout=600000 \
             --wait --timeout=300s >/dev/null; then
         fail "${name}" "helm install failed"
         return
@@ -936,18 +935,51 @@ scenario_shutdown_on_sigterm_failover() {
         cleanup_release; return
     fi
 
+    # Capture the current pod UID before deleting it. A plain `kubectl wait
+    # --for=condition=Ready pod/<name>` can match the still-Ready, terminating
+    # pod before the StatefulSet creates its replacement, making the role
+    # assertion below race against the full 60-second termination grace period.
+    local old_uid
+    old_uid=$(kctl get pod "${RELEASE}-${prim}" -o jsonpath='{.metadata.uid}' 2>/dev/null)
+    if [[ -z ${old_uid} ]]; then
+        fail "${name}" "could not read UID of ${RELEASE}-${prim} before delete"
+        cleanup_release; return
+    fi
+
     # Graceful delete of the chosen primary — DEFAULT grace period, so kubelet
     # sends SIGTERM and valkey-server runs its shutdown-on-sigterm handler.
     # This is deliberate: shutdown-on-sigterm ONLY acts on the graceful path.
     # --force/--grace-period=0 would collapse the grace window and SIGKILL the
     # process, bypassing the very handler under test (that ungraceful path is
-    # cluster-node-timeout's job, not this feature's). --wait=false so we can
-    # watch the handover live.
+    # cluster-node-timeout's job, not this feature's). --wait=false lets us
+    # distinguish the replacement by UID instead of accidentally observing the
+    # terminating pod under the reused StatefulSet pod name.
     log "gracefully deleting primary pod ${RELEASE}-${prim} (SIGTERM path)"
     kctl delete pod "${RELEASE}-${prim}" --wait=false >/dev/null
 
-    # The shard must acquire a new primary FAST — well inside the 180s
-    # node-timeout, which is the whole point: this is the handoff, not
+    # Wait for the StatefulSet controller to create a genuinely new pod. The
+    # old object may remain Ready while Terminating, so the UID transition is
+    # the load-bearing guard against a false failure here.
+    local new_uid=""
+    for _ in $(seq 1 60); do
+        new_uid=$(kctl get pod "${RELEASE}-${prim}" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+        if [[ -n ${new_uid} && ${new_uid} != "${old_uid}" ]]; then
+            break
+        fi
+        sleep 2
+    done
+    if [[ -z ${new_uid} || ${new_uid} == "${old_uid}" ]]; then
+        fail "${name}" "${RELEASE}-${prim} was not recreated (UID still ${old_uid})"
+        cleanup_release; return
+    fi
+
+    if ! kctl wait --for=condition=Ready "pod/${RELEASE}-${prim}" --timeout=120s >/dev/null 2>&1; then
+        fail "${name}" "replacement ${RELEASE}-${prim} (uid=${new_uid}) never became Ready"
+        cleanup_release; return
+    fi
+
+    # The shard must acquire a new primary well inside the 600s node-timeout,
+    # which is the whole point: this is the native handoff, not timeout-based
     # auto-failover. Observe from a pod we did NOT delete.
     local observer=$(( (prim + 1) % 6 ))
     local state masters
@@ -968,10 +1000,6 @@ scenario_shutdown_on_sigterm_failover() {
     # Ex-primary must come back demoted to replica. If shutdown-on-sigterm had
     # NOT handed off, the pod would persist role=master in nodes.conf and
     # rejoin still claiming the slots — so this is the load-bearing assertion.
-    if ! kctl wait --for=condition=Ready "pod/${RELEASE}-${prim}" --timeout=120s >/dev/null 2>&1; then
-        fail "${name}" "ex-primary ${RELEASE}-${prim} never became Ready again"
-        cleanup_release; return
-    fi
     local after_role=""
     for _ in $(seq 1 15); do
         after_role=$(role_of "${prim}")

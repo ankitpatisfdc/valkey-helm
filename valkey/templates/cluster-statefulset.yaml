@@ -157,27 +157,9 @@ spec:
             - name: tcp-bus
               containerPort: {{ .Values.cluster.busPort }}
               protocol: TCP
-          {{- $strictCmd := include "valkey.probeShellCommand" (dict "ctx" . "acceptLoading" false) }}
-          {{- $loadCmd   := include "valkey.probeShellCommand" (dict "ctx" . "acceptLoading" true)  }}
-          startupProbe:
-            exec:
-              command: [ "sh", "-c", {{ $strictCmd | quote }} ]
-            initialDelaySeconds: 5
-            periodSeconds: {{ .Values.cluster.startupProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.cluster.startupProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.cluster.startupProbe.failureThreshold }}
-          livenessProbe:
-            exec:
-              command: [ "sh", "-c", {{ $loadCmd | quote }} ]
-            periodSeconds: {{ .Values.cluster.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.cluster.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.cluster.livenessProbe.failureThreshold }}
-          readinessProbe:
-            exec:
-              command: [ "sh", "-c", {{ $strictCmd | quote }} ]
-            periodSeconds: {{ .Values.cluster.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.cluster.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.cluster.readinessProbe.failureThreshold }}
+          {{- with (include "valkey.healthProbes" (dict "ctx" . "config" .Values.cluster)) }}
+          {{- . | nindent 10 }}
+          {{- end }}
           {{- if and (gt (int .Values.cluster.replicasPerShard) 0) .Values.cluster.preStopFailover.enabled }}
           lifecycle:
             # Graceful CLUSTER FAILOVER on primary-pod shutdown. Gated on

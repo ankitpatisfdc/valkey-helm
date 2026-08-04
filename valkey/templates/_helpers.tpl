@@ -188,29 +188,33 @@ Validate replica authentication configuration
 
 {{/*
 Render the Valkey server container health probes (startupProbe, livenessProbe,
-readinessProbe). Each probe is gated on its own `enabled` flag. When a probe's
-`customProbe` map is set it replaces the default handler and timing entirely;
-otherwise the default valkey-cli ping exec handler (TLS-aware) is emitted with
-whichever timing fields are set on that probe. The command is built as an
-argument list and invokes valkey-cli directly (no shell), with the TLS flags
-appended only when `tls.enabled` is set. Returns nothing when no probe is
-enabled, so callers should guard with `with`.
+readinessProbe).
+
+Args (passed as a dict):
+  ctx     - the parent context (.)
+  config  - the mode-specific values map containing the three probe maps
+
+Each probe is gated on its own `enabled` flag. When a probe's `customProbe` map
+is set it replaces the default handler and timing entirely. Otherwise a
+TLS-aware valkey-cli PING handler is emitted with whichever Kubernetes timing
+fields are set on that probe. The startup and readiness handlers accept PONG
+and NOAUTH but reject LOADING; liveness also accepts LOADING so a replica is
+not restarted in the middle of a full resynchronisation. Returns nothing when
+no probe is enabled, so callers should guard with `with`.
 */}}
 {{- define "valkey.healthProbes" -}}
-{{- $cmd := list "valkey-cli" -}}
-{{- if $.Values.tls.enabled -}}
-{{- $cmd = concat $cmd (list "--cacert" (printf "/tls/%s" $.Values.tls.caPublicKey) "--tls") -}}
-{{- end -}}
-{{- $cmd = append $cmd "ping" -}}
+{{- $ctx := .ctx -}}
+{{- $config := .config -}}
 {{- $probes := dict -}}
 {{- range $name := (list "startupProbe" "livenessProbe" "readinessProbe") -}}
-{{- $probe := index $.Values $name -}}
+{{- $probe := (index $config $name) | default dict -}}
 {{- if $probe -}}
-{{- if $probe.enabled -}}
+{{- if (get $probe "enabled") -}}
 {{- if $probe.customProbe -}}
 {{- $probes = set $probes $name $probe.customProbe -}}
 {{- else -}}
-{{- $rendered := dict "exec" (dict "command" $cmd) -}}
+{{- $command := include "valkey.probeShellCommand" (dict "ctx" $ctx "acceptLoading" (eq $name "livenessProbe")) -}}
+{{- $rendered := dict "exec" (dict "command" (list "sh" "-c" $command)) -}}
 {{- range $field := (list "initialDelaySeconds" "periodSeconds" "timeoutSeconds" "failureThreshold" "successThreshold") -}}
 {{- if hasKey $probe $field -}}{{- $rendered = set $rendered $field (index $probe $field) -}}{{- end -}}
 {{- end -}}

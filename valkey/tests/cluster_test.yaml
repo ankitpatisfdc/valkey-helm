@@ -1565,4 +1565,3 @@ tests:
           path: spec.template.metadata.labels["istio.io/dataplane-mode"]
       - notExists:
           path: spec.template.metadata.labels["sidecar.istio.io/inject"]
-

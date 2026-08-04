@@ -117,26 +117,9 @@ spec:
             - name: tcp
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-          {{- $strictCmd := include "valkey.probeShellCommand" (dict "ctx" . "acceptLoading" false) }}
-          {{- $loadCmd   := include "valkey.probeShellCommand" (dict "ctx" . "acceptLoading" true)  }}
-          startupProbe:
-            exec:
-              command: [ "sh", "-c", {{ $strictCmd | quote }} ]
-            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
-          livenessProbe:
-            exec:
-              command: [ "sh", "-c", {{ $loadCmd | quote }} ]
-            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
-          readinessProbe:
-            exec:
-              command: [ "sh", "-c", {{ $strictCmd | quote }} ]
-            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          {{- with (include "valkey.healthProbes" (dict "ctx" . "config" .Values)) }}
+          {{- . | nindent 10 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

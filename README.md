@@ -4,9 +4,9 @@ Helm charts for Valkey on Kubernetes.
 
 | Chart | Description |
 |---|---|
-| [valkey](valkey/) | Standalone / replication without operator |
-| [valkey-operator](valkey-operator/) | Installs the valkey-operator |
-| [valkey-resources](valkey-resources/) | Operator managed CRs (ValkeyCluster) |
+| [valkey](valkey/) | Standalone, replication, or cluster deployments managed directly by Helm |
+| [valkey-operator](valkey-operator/) | Installs the valkey-operator for operator-managed clusters |
+| [valkey-resources](valkey-resources/) | Installs operator-managed CRs (`ValkeyCluster`) |
 
 ---
 
@@ -17,7 +17,13 @@ helm repo add valkey https://valkey.io/valkey-helm/
 helm install valkey valkey/valkey
 ```
 
-Operator managed cluster:
+Cluster mode can be deployed directly with the `valkey` chart:
+
+```bash
+helm install my-cluster valkey/valkey --set cluster.enabled=true --set cluster.persistence.size=5Gi
+```
+
+Alternatively, deploy an operator-managed cluster with the `valkey-operator` and `valkey-resources` charts:
 
 ```bash
 helm install valkey-operator valkey/valkey-operator -n valkey-operator-system --create-namespace

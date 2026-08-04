@@ -103,8 +103,13 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 
-# Probe tuning. The probe command is `valkey-cli ping` (with TLS args
-# when tls.enabled). Only the timing knobs are configurable.
+# Health probes for the standalone Valkey container. Replica and cluster modes
+# have equivalent mode-specific blocks below so that slow-loading datasets can
+# be tuned independently for each workload type.
+#
+# Each probe is gated on its `enabled` flag. Set `customProbe` to a complete
+# Kubernetes probe spec to replace both the default exec handler and all timing
+# fields (for example, to use an httpGet or tcpSocket probe).
 #
 # The three probes have different LOADING policies:
 #
@@ -126,17 +131,29 @@ resources: {}
 #     traffic, so it must leave the Service endpoint set until it can.
 #     The pod sits 'Running 0/1' during full-resync — exactly right.
 startupProbe:
+  enabled: true
+  initialDelaySeconds: 0
   periodSeconds: 5
   timeoutSeconds: 5
   failureThreshold: 30
+  successThreshold: 1
+  customProbe: {}
 livenessProbe:
+  enabled: true
+  initialDelaySeconds: 0
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 6
+  successThreshold: 1
+  customProbe: {}
 readinessProbe:
+  enabled: true
+  initialDelaySeconds: 0
   periodSeconds: 5
   timeoutSeconds: 3
   failureThreshold: 3
+  successThreshold: 1
+  customProbe: {}
 
 # Resource limits/requests for init containers
 initResources: {}
@@ -147,36 +164,6 @@ initResources: {}
   # requests:
   #   cpu: 100m
   #   memory: 128Mi
-
-# Health probes for the main Valkey container.
-# Each probe is gated on its own `enabled` flag and rendered by the
-# `valkey.healthProbes` helper. The default handler is a `valkey-cli ping` exec
-# (TLS-aware). Set `customProbe` to a full probe spec to replace the default
-# handler and timing entirely (e.g. an httpGet or tcpSocket probe).
-# The defaults below match the previous hardcoded behavior (Kubernetes probe
-# defaults); readinessProbe is opt-in since the container had none before.
-startupProbe:
-  enabled: true
-  initialDelaySeconds: 0
-  periodSeconds: 10
-  timeoutSeconds: 1
-  failureThreshold: 3
-  customProbe: {}
-livenessProbe:
-  enabled: true
-  initialDelaySeconds: 0
-  periodSeconds: 10
-  timeoutSeconds: 1
-  failureThreshold: 3
-  customProbe: {}
-readinessProbe:
-  enabled: false
-  initialDelaySeconds: 0
-  periodSeconds: 10
-  timeoutSeconds: 1
-  failureThreshold: 3
-  successThreshold: 1
-  customProbe: {}
 
 # Additional init containers
 extraInitContainers: []
@@ -332,21 +319,33 @@ replica:
   # More info: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#persistentvolumeclaim-retention
   persistentVolumeClaimRetentionPolicy: {}
 
-  # Probe tuning for replicated (non-cluster) StatefulSet pods. Same
-  # rationale as the top-level startupProbe block — bump failureThreshold
-  # for large RDBs.
+  # Health probes for replicated (non-cluster) StatefulSet pods. These expose
+  # the same enabled/custom replacement API and timing fields as standalone
+  # mode; bump startupProbe.failureThreshold for large RDBs.
   startupProbe:
+    enabled: true
+    initialDelaySeconds: 0
     periodSeconds: 5
     timeoutSeconds: 5
     failureThreshold: 30
+    successThreshold: 1
+    customProbe: {}
   livenessProbe:
+    enabled: true
+    initialDelaySeconds: 0
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 6
+    successThreshold: 1
+    customProbe: {}
   readinessProbe:
+    enabled: true
+    initialDelaySeconds: 0
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 3
+    successThreshold: 1
+    customProbe: {}
 
 # Cluster mode configuration for Valkey Cluster (sharded deployment)
 # Note: cluster.enabled and replica.enabled are mutually exclusive
@@ -481,23 +480,35 @@ cluster:
   isolation:
     enabled: true
 
-  # Probe tuning for cluster-mode StatefulSet pods. Same rationale as the
-  # top-level startupProbe block — bump failureThreshold for large RDBs.
+  # Health probes for cluster-mode StatefulSet pods. These expose the same
+  # enabled/custom replacement API and timing fields as standalone mode.
   # In cluster mode, replicas catch up via PSYNC + RDB transfer on (re)
   # connect, so the post-restart load window can be just as long as for
   # standalone replicated mode.
   startupProbe:
+    enabled: true
+    initialDelaySeconds: 5
     periodSeconds: 5
     timeoutSeconds: 5
     failureThreshold: 30
+    successThreshold: 1
+    customProbe: {}
   livenessProbe:
+    enabled: true
+    initialDelaySeconds: 0
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 6
+    successThreshold: 1
+    customProbe: {}
   readinessProbe:
+    enabled: true
+    initialDelaySeconds: 0
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 3
+    successThreshold: 1
+    customProbe: {}
 
   # PersistentVolumeClaim retention policy for StatefulSet
   # Controls when PVCs are deleted (requires Kubernetes 1.23+)

@@ -40,16 +40,6 @@ Deploy Valkey with master-replica architecture for read scaling and data redunda
 helm install valkey valkey/valkey --set replica.enabled=true --set replica.persistence.size=5Gi
 ```
 
-**IMPORTANT**
-
-## Cluster Mode
-
-This chart does not and will not support **Valkey cluster** mode. Managing a clustered topology is fundamentally different from standalone or replicated deployments, and the operational requirements go well beyond what this chart is designed to handle.
-
-For cluster mode, a separate chart is being developed that uses the valkey-operator to deploy and manage clusters. The operator must be installed first.
-
-To follow progress or get involved, see the [weekly meeting wiki](https://github.com/valkey-io/valkey-operator/wiki/Weekly-meeting). 
-
 **Services:**
 
 * `valkey`: Master/write service
@@ -70,11 +60,13 @@ If fewer than `minReplicasToWrite` replicas are available, the master will rejec
 
 ### Cluster Mode
 
-Deploy a sharded Valkey cluster for horizontal scaling and high availability:
+Deploy a sharded Valkey cluster for horizontal scaling and high availability directly with this chart:
 
 ```bash
 helm install valkey valkey/valkey --set cluster.enabled=true --set cluster.persistence.size=5Gi
 ```
+
+For an operator-managed lifecycle instead, use the [valkey-operator](../valkey-operator/) together with the [valkey-resources](../valkey-resources/) chart.
 
 **Architecture:**
 
@@ -378,12 +370,13 @@ tls:
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | initResources | object | `{}` |  |
-| livenessProbe.customProbe | object | `{}` | Full probe spec to replace the default valkey-cli ping handler and timing |
+| livenessProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG, NOAUTH, or LOADING is healthy) and timing |
 | livenessProbe.enabled | bool | `true` |  |
-| livenessProbe.failureThreshold | int | `3` |  |
+| livenessProbe.failureThreshold | int | `6` |  |
 | livenessProbe.initialDelaySeconds | int | `0` |  |
 | livenessProbe.periodSeconds | int | `10` |  |
-| livenessProbe.timeoutSeconds | int | `1` |  |
+| livenessProbe.successThreshold | int | `1` |  |
+| livenessProbe.timeoutSeconds | int | `5` |  |
 | metrics.enabled | bool | `false` |  |
 | metrics.exporter.args | list | `[]` |  |
 | metrics.exporter.command | list | `[]` |  |
@@ -446,13 +439,13 @@ tls:
 | podSecurityContext.runAsUser | int | `1000` |  |
 | priorityClassName | string | `""` |  |
 | runtimeClassName | string | `""` | RuntimeClassName for the pods (e.g. `gvisor`, `kata-containers`); empty uses the cluster default runtime |
-| readinessProbe.customProbe | object | `{}` | Full probe spec to replace the default valkey-cli ping handler and timing |
-| readinessProbe.enabled | bool | `false` | Opt-in; the Valkey container had no readiness probe before |
+| readinessProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG or NOAUTH is healthy; LOADING is not) and timing |
+| readinessProbe.enabled | bool | `true` |  |
 | readinessProbe.failureThreshold | int | `3` |  |
 | readinessProbe.initialDelaySeconds | int | `0` |  |
-| readinessProbe.periodSeconds | int | `10` |  |
+| readinessProbe.periodSeconds | int | `5` |  |
 | readinessProbe.successThreshold | int | `1` |  |
-| readinessProbe.timeoutSeconds | int | `1` |  |
+| readinessProbe.timeoutSeconds | int | `3` |  |
 | replica.enabled | bool | `false` |  |
 | replica.replicas | int | `2` |  |
 | replica.replicationUser | string | `"default"` |  |
@@ -471,6 +464,27 @@ tls:
 | replica.persistence.size | string | `""` | Required if replica is enabled |
 | replica.persistence.storageClass | string | `""` |  |
 | replica.persistence.accessModes | list | `""` |  |
+| replica.startupProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG or NOAUTH is healthy; LOADING is not) and timing |
+| replica.startupProbe.enabled | bool | `true` |  |
+| replica.startupProbe.failureThreshold | int | `30` |  |
+| replica.startupProbe.initialDelaySeconds | int | `0` |  |
+| replica.startupProbe.periodSeconds | int | `5` |  |
+| replica.startupProbe.successThreshold | int | `1` |  |
+| replica.startupProbe.timeoutSeconds | int | `5` |  |
+| replica.livenessProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG, NOAUTH, or LOADING is healthy) and timing |
+| replica.livenessProbe.enabled | bool | `true` |  |
+| replica.livenessProbe.failureThreshold | int | `6` |  |
+| replica.livenessProbe.initialDelaySeconds | int | `0` |  |
+| replica.livenessProbe.periodSeconds | int | `10` |  |
+| replica.livenessProbe.successThreshold | int | `1` |  |
+| replica.livenessProbe.timeoutSeconds | int | `5` |  |
+| replica.readinessProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG or NOAUTH is healthy; LOADING is not) and timing |
+| replica.readinessProbe.enabled | bool | `true` |  |
+| replica.readinessProbe.failureThreshold | int | `3` |  |
+| replica.readinessProbe.initialDelaySeconds | int | `0` |  |
+| replica.readinessProbe.periodSeconds | int | `5` |  |
+| replica.readinessProbe.successThreshold | int | `1` |  |
+| replica.readinessProbe.timeoutSeconds | int | `3` |  |
 | cluster.enabled | bool | `false` | Enable cluster mode (mutually exclusive with replica.enabled) |
 | cluster.shards | int | `3` | Number of primary shards (minimum 3) |
 | cluster.replicasPerShard | int | `1` | Number of replicas per shard |
@@ -483,6 +497,27 @@ tls:
 | cluster.persistence.size | string | `""` | Required if cluster is enabled |
 | cluster.persistence.storageClass | string | `""` |  |
 | cluster.persistence.accessModes | list | `["ReadWriteOnce"]` |  |
+| cluster.startupProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG or NOAUTH is healthy; LOADING is not) and timing |
+| cluster.startupProbe.enabled | bool | `true` |  |
+| cluster.startupProbe.failureThreshold | int | `30` |  |
+| cluster.startupProbe.initialDelaySeconds | int | `5` |  |
+| cluster.startupProbe.periodSeconds | int | `5` |  |
+| cluster.startupProbe.successThreshold | int | `1` |  |
+| cluster.startupProbe.timeoutSeconds | int | `5` |  |
+| cluster.livenessProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG, NOAUTH, or LOADING is healthy) and timing |
+| cluster.livenessProbe.enabled | bool | `true` |  |
+| cluster.livenessProbe.failureThreshold | int | `6` |  |
+| cluster.livenessProbe.initialDelaySeconds | int | `0` |  |
+| cluster.livenessProbe.periodSeconds | int | `10` |  |
+| cluster.livenessProbe.successThreshold | int | `1` |  |
+| cluster.livenessProbe.timeoutSeconds | int | `5` |  |
+| cluster.readinessProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG or NOAUTH is healthy; LOADING is not) and timing |
+| cluster.readinessProbe.enabled | bool | `true` |  |
+| cluster.readinessProbe.failureThreshold | int | `3` |  |
+| cluster.readinessProbe.initialDelaySeconds | int | `0` |  |
+| cluster.readinessProbe.periodSeconds | int | `5` |  |
+| cluster.readinessProbe.successThreshold | int | `1` |  |
+| cluster.readinessProbe.timeoutSeconds | int | `3` |  |
 | resources | object | `{}` |  |
 | securityContext.capabilities.drop[0] | string | `"ALL"` |  |
 | securityContext.readOnlyRootFilesystem | bool | `true` |  |
@@ -498,12 +533,13 @@ tls:
 | serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
-| startupProbe.customProbe | object | `{}` | Full probe spec to replace the default valkey-cli ping handler and timing |
+| startupProbe.customProbe | object | `{}` | Full probe spec replacing the default shell response policy (PONG or NOAUTH is healthy; LOADING is not) and timing |
 | startupProbe.enabled | bool | `true` |  |
-| startupProbe.failureThreshold | int | `3` |  |
+| startupProbe.failureThreshold | int | `30` |  |
 | startupProbe.initialDelaySeconds | int | `0` |  |
-| startupProbe.periodSeconds | int | `10` |  |
-| startupProbe.timeoutSeconds | int | `1` |  |
+| startupProbe.periodSeconds | int | `5` |  |
+| startupProbe.successThreshold | int | `1` |  |
+| startupProbe.timeoutSeconds | int | `5` |  |
 | tls.caPublicKey | string | `"ca.crt"` |  |
 | tls.dhParamKey | string | `""` |  |
 | tls.enabled | bool | `false` |  |

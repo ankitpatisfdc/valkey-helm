@@ -164,4 +164,3 @@ tests:
     asserts:
       - hasDocuments:
           count: 1
-

@@ -2,28 +2,32 @@ suite: health probes configuration
 templates:
   - templates/deploy_valkey.yaml
   - templates/statefulset.yaml
+  - templates/cluster-statefulset.yaml
   - templates/init_config.yaml
 tests:
-  - it: renders default startup and liveness probes on the Deployment valkey container
+  - it: renders all default probes on the standalone Deployment
     template: templates/deploy_valkey.yaml
     asserts:
       - exists:
           path: spec.template.spec.containers[0].startupProbe
       - exists:
           path: spec.template.spec.containers[0].livenessProbe
-      - notExists:
+      - exists:
           path: spec.template.spec.containers[0].readinessProbe
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.exec.command
-          value: [ "valkey-cli", "ping" ]
+          value: [ "sh", "-c", "valkey-cli ping 2>&1 | grep -qE 'PONG|NOAUTH|LOADING'" ]
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.exec.command
+          value: [ "sh", "-c", "valkey-cli ping 2>&1 | grep -qE 'PONG|NOAUTH'" ]
       - equal:
           path: spec.template.spec.containers[0].startupProbe.periodSeconds
-          value: 10
+          value: 5
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.failureThreshold
-          value: 3
+          value: 6
 
-  - it: renders default probes on the StatefulSet valkey container
+  - it: renders mode-specific default probes on the replica StatefulSet
     template: templates/statefulset.yaml
     set:
       replica.enabled: true
@@ -33,22 +37,51 @@ tests:
           path: spec.template.spec.containers[0].startupProbe
       - exists:
           path: spec.template.spec.containers[0].livenessProbe
-      - notExists:
+      - exists:
           path: spec.template.spec.containers[0].readinessProbe
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 30
 
-  - it: enables the readiness probe with its success threshold when requested
-    template: templates/deploy_valkey.yaml
+  - it: preserves the cluster startup delay while using the common probe renderer
+    template: templates/cluster-statefulset.yaml
     set:
-      readinessProbe.enabled: true
+      cluster.enabled: true
+      cluster.persistence.size: "5Gi"
     asserts:
       - exists:
           path: spec.template.spec.containers[0].readinessProbe
       - equal:
-          path: spec.template.spec.containers[0].readinessProbe.successThreshold
-          value: 1
+          path: spec.template.spec.containers[0].startupProbe.initialDelaySeconds
+          value: 5
       - equal:
-          path: spec.template.spec.containers[0].readinessProbe.exec.command
-          value: [ "valkey-cli", "ping" ]
+          path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
+          value: 0
+
+  - it: renders every supported timing field
+    template: templates/deploy_valkey.yaml
+    set:
+      readinessProbe.initialDelaySeconds: 7
+      readinessProbe.periodSeconds: 11
+      readinessProbe.timeoutSeconds: 2
+      readinessProbe.failureThreshold: 9
+      readinessProbe.successThreshold: 2
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.initialDelaySeconds
+          value: 7
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.periodSeconds
+          value: 11
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 2
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.failureThreshold
+          value: 9
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.successThreshold
+          value: 2
 
   - it: omits a probe when it is disabled
     template: templates/deploy_valkey.yaml
@@ -75,6 +108,27 @@ tests:
       - notExists:
           path: spec.template.spec.containers[0].livenessProbe.periodSeconds
 
+  - it: supports enabled and customProbe in a mode-specific probe block
+    template: templates/statefulset.yaml
+    set:
+      replica.enabled: true
+      replica.persistence.size: "5Gi"
+      replica.startupProbe.enabled: false
+      replica.readinessProbe.customProbe:
+        httpGet:
+          path: /ready
+          port: 8080
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].startupProbe
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /ready
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.exec
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+
   - it: uses the TLS-aware ping command when TLS is enabled
     template: templates/deploy_valkey.yaml
     set:
@@ -84,4 +138,4 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].startupProbe.exec.command
-          value: [ "valkey-cli", "--cacert", "/tls/ca.crt", "--tls", "ping" ]
+          value: [ "sh", "-c", "valkey-cli --tls --cacert /tls/ca.crt ping 2>&1 | grep -qE 'PONG|NOAUTH'" ]
