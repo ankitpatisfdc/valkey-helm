@@ -843,14 +843,14 @@ scenario_rollout_restart_orderly_failover() {
 # Isolation, so a pass can ONLY be attributed to shutdown-on-sigterm:
 #   * preStopFailover.enabled=false — the hook (and its cluster-script mount)
 #     is not even rendered, so it cannot be the cause of any handover.
-#   * nodeTimeout=600000 — cluster-node-timeout auto-failover cannot fire
-#     anywhere inside this scenario's bounded waits, so an observed role flip
-#     is not the cluster promoting a replica after declaring the primary dead.
-#     The only remaining mechanism is the primary handing off on SIGTERM.
+#   * cluster-replica-no-failover=yes is set on the selected replica, disabling
+#     its automatic timeout-based election. The native shutdown handler uses
+#     an explicit CLUSTER FAILOVER FORCE request, which remains allowed. This
+#     is the same isolation used by Valkey's own shutdown-failover test.
 #
 # We delete ONE primary pod with the DEFAULT grace period (a normal graceful
 # SIGTERM — NOT --force, which would also bypass shutdown-on-sigterm by
-# SIGKILLing). A cluster-aware canary written before the delete must survive,
+# SIGKILLing). A canary written to that primary before the delete must survive,
 # and the ex-primary must come back demoted to replica (proof it handed off
 # rather than being killed and restarted still-primary).
 # ---------------------------------------------------------------------------
@@ -865,7 +865,6 @@ scenario_shutdown_on_sigterm_failover() {
             --set=cluster.shards=3 \
             --set=cluster.replicasPerShard=1 \
             --set=cluster.preStopFailover.enabled=false \
-            --set=cluster.nodeTimeout=600000 \
             --wait --timeout=300s >/dev/null; then
         fail "${name}" "helm install failed"
         return
@@ -909,8 +908,8 @@ scenario_shutdown_on_sigterm_failover() {
         cleanup_release; return
     fi
 
-    # Find a pod that is currently a primary; capture the whole role vector so
-    # we can prove this specific ordinal flipped afterwards.
+    # Find a pod that is currently a primary so we can prove this specific
+    # ordinal flipped afterwards.
     role_of() {
         kctl exec "${RELEASE}-$1" -c "${RELEASE}" -- \
             valkey-cli info replication 2>/dev/null \
@@ -925,15 +924,109 @@ scenario_shutdown_on_sigterm_failover() {
         cleanup_release; return
     fi
 
-    # Cluster-aware canary (follows MOVED). Shell metacharacters for the same
-    # quoting-coverage reason as elsewhere.
-    local canary_key="sos-canary-$$"
-    local canary_val='native-shutdown-ok $x "q" \b`t`'
-    if ! kctl exec "${RELEASE}-0" -c "${RELEASE}" -- \
-            valkey-cli -c set "${canary_key}" "${canary_val}" >/dev/null 2>&1; then
-        fail "${name}" "initial SET failed"
+    # Identify this primary's exact replica. Disable only that replica's
+    # automatic timeout-based failover; Valkey's native shutdown handoff sends
+    # it an explicit CLUSTER FAILOVER FORCE request, which bypasses this flag.
+    # We later assert this exact pod was promoted, so a stale cluster-wide
+    # master count cannot make the scenario pass.
+    local primary_id replica_id replica="" node_id
+    primary_id=$(kctl exec "${RELEASE}-${prim}" -c "${RELEASE}" -- \
+        valkey-cli cluster myid 2>/dev/null | tr -d '\r\n' || true)
+    replica_id=$(kctl exec "${RELEASE}-${prim}" -c "${RELEASE}" -- \
+        valkey-cli cluster nodes 2>/dev/null \
+        | awk -v primary="${primary_id}" \
+            '$4 == primary && $3 ~ /(^|,)(slave|replica)(,|$)/ { print $1; exit }' || true)
+    for i in 0 1 2 3 4 5; do
+        node_id=$(kctl exec "${RELEASE}-${i}" -c "${RELEASE}" -- \
+            valkey-cli cluster myid 2>/dev/null | tr -d '\r\n' || true)
+        if [[ -n ${replica_id} && ${node_id} == "${replica_id}" ]]; then
+            replica=${i}
+            break
+        fi
+    done
+    if [[ -z ${primary_id} || -z ${replica} ]]; then
+        fail "${name}" "could not identify the replica paired with primary ${RELEASE}-${prim} (primary_id=${primary_id:-<unknown>} replica_id=${replica_id:-<unknown>})"
         cleanup_release; return
     fi
+
+    local config_result
+    config_result=$(kctl exec "${RELEASE}-${replica}" -c "${RELEASE}" -- \
+        valkey-cli config set cluster-replica-no-failover yes 2>/dev/null \
+        | tr -d '\r\n' || true)
+    if [[ ${config_result} != OK ]]; then
+        fail "${name}" "could not disable automatic failover on ${RELEASE}-${replica}: ${config_result:-<no response>}"
+        cleanup_release; return
+    fi
+
+    # Replication PINGs advance master_repl_offset. Freeze their interval so a
+    # PING cannot land between the synchronized-offset check below and SIGTERM;
+    # Valkey's upstream shutdown-failover regression test does the same.
+    config_result=$(kctl exec "${RELEASE}-${prim}" -c "${RELEASE}" -- \
+        valkey-cli config set repl-ping-replica-period 3600 2>/dev/null \
+        | tr -d '\r\n' || true)
+    if [[ ${config_result} != OK ]]; then
+        fail "${name}" "could not freeze replication PINGs on ${RELEASE}-${prim}: ${config_result:-<no response>}"
+        cleanup_release; return
+    fi
+
+    # Put the canary on the selected primary's own shard. A cluster-aware SET
+    # could follow MOVED to some other primary, leaving this primary at offset
+    # zero and failing to exercise data replication across the handoff. Try
+    # candidate keys directly until one hashes to a slot owned here.
+    local canary_key="" candidate set_result
+    local canary_val='native-shutdown-ok $x "q" \b`t`'
+    for i in $(seq 1 100); do
+        candidate="sos-canary-${prim}-${i}-$$"
+        set_result=$(kctl exec "${RELEASE}-${prim}" -c "${RELEASE}" -- \
+            valkey-cli set "${candidate}" "${canary_val}" 2>/dev/null \
+            | tr -d '\r\n' || true)
+        if [[ ${set_result} == OK ]]; then
+            canary_key=${candidate}
+            break
+        fi
+    done
+    if [[ -z ${canary_key} ]]; then
+        fail "${name}" "could not find a canary key owned by primary ${RELEASE}-${prim}"
+        cleanup_release; return
+    fi
+
+    # cluster_state:ok only proves that the slot map has converged; it can
+    # become true while a newly assigned replica is still doing its initial
+    # PSYNC. Valkey's native shutdown failover is deliberately best-effort and
+    # will only choose a replica that is ONLINE and has acknowledged the
+    # primary's exact replication offset. If SIGTERM arrives before that, the
+    # server exits without handing off and correctly comes back as primary.
+    #
+    # Check the primary's single INFO snapshot so the replica offset and
+    # master_repl_offset are comparable. This is after the canary SET and with
+    # replication PINGs frozen, so equality remains stable until SIGTERM.
+    local replication_info="" master_offset="" synced_replica=""
+    for _ in $(seq 1 60); do
+        replication_info=$(kctl exec "${RELEASE}-${prim}" -c "${RELEASE}" -- \
+            valkey-cli info replication 2>/dev/null | tr -d '\r' || true)
+        master_offset=$(printf '%s\n' "${replication_info}" \
+            | awk -F: '/^master_repl_offset:/{print $2}')
+        synced_replica=$(printf '%s\n' "${replication_info}" \
+            | awk -F, -v want="${master_offset}" '
+                /^slave[0-9]+:/ && /state=online/ {
+                    for (i = 1; i <= NF; i++) {
+                        if ($i ~ /^offset=/) {
+                            sub(/^offset=/, "", $i)
+                            if ($i == want) { print; exit }
+                        }
+                    }
+                }
+            ')
+        [[ -n ${synced_replica} ]] && break
+        sleep 2
+    done
+    if [[ -z ${synced_replica} ]]; then
+        local replication_summary
+        replication_summary=$(printf '%s\n' "${replication_info}" | tr '\n' ';')
+        fail "${name}" "primary ${RELEASE}-${prim} never acquired a fully synchronized replica before SIGTERM; last INFO replication: ${replication_summary:-<unavailable>}"
+        cleanup_release; return
+    fi
+    log "primary ${RELEASE}-${prim} has a synchronized replica at offset ${master_offset}"
 
     # Capture the current pod UID before deleting it. A plain `kubectl wait
     # --for=condition=Ready pod/<name>` can match the still-Ready, terminating
@@ -957,6 +1050,20 @@ scenario_shutdown_on_sigterm_failover() {
     log "gracefully deleting primary pod ${RELEASE}-${prim} (SIGTERM path)"
     kctl delete pod "${RELEASE}-${prim}" --wait=false >/dev/null
 
+    # Prove the native handler promoted the exact paired replica. Automatic
+    # election is disabled on this pod above, so role=master here can only be
+    # the explicit FORCE request emitted by shutdown-on-sigterm=failover.
+    local promoted_role=""
+    for _ in $(seq 1 30); do
+        promoted_role=$(role_of "${replica}")
+        [[ ${promoted_role} == master ]] && break
+        sleep 2
+    done
+    if [[ ${promoted_role} != master ]]; then
+        fail "${name}" "paired replica ${RELEASE}-${replica} role=${promoted_role:-<unknown>} after SIGTERM (want master)"
+        cleanup_release; return
+    fi
+
     # Wait for the StatefulSet controller to create a genuinely new pod. The
     # old object may remain Ready while Terminating, so the UID transition is
     # the load-bearing guard against a false failure here.
@@ -978,9 +1085,8 @@ scenario_shutdown_on_sigterm_failover() {
         cleanup_release; return
     fi
 
-    # The shard must acquire a new primary well inside the 600s node-timeout,
-    # which is the whole point: this is the native handoff, not timeout-based
-    # auto-failover. Observe from a pod we did NOT delete.
+    # The cluster must settle back to its healthy 3-primary shape. Observe from
+    # a pod we did NOT delete.
     local observer=$(( (prim + 1) % 6 ))
     local state masters
     for _ in $(seq 1 20); do

@@ -247,8 +247,8 @@ data:
       {{- end }}
       {{- with .Values.cluster.shutdownOnSigterm }}
       # Native graceful primary handover on SIGTERM (see cluster.shutdownOnSigterm
-      # in values.yaml). Complements the preStop CLUSTER FAILOVER hook and still
-      # fires when that hook is skipped (force-delete) or disabled.
+      # in values.yaml). Complements the preStop CLUSTER FAILOVER hook and can
+      # still hand off when that hook is disabled or exits before doing so.
       echo "shutdown-on-sigterm {{ . }}"
       {{- end }}
       echo ""
@@ -384,4 +384,3 @@ data:
       log "Appending /usr/local/etc/valkey/valkey.conf"
       cat /usr/local/etc/valkey/valkey.conf >>"$VALKEY_CONFIG"
     fi
-
