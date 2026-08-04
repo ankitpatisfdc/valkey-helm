@@ -215,6 +215,9 @@
         "extraInitContainers": {
             "type": "array"
         },
+        "extraContainers": {
+            "type": "array"
+        },
         "extraValkeyConfigs": {
             "type": "array"
         },
