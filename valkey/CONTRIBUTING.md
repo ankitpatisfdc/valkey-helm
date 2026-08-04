@@ -183,13 +183,15 @@ helm unittest -u ./valkey
 Run the full validation suite before opening a pull request:
 
 ```bash
-just validate   # runs lint + unit tests
+just validate                   # runs lint + unit tests
+just test-schema-completeness   # runs schema completeness test
+just functional-test            # runs functional tests in local kind cluster
 ```
 
 Optionally, install the chart into a local cluster for an end-to-end check:
 
 ```bash
-helm install valkey ./valkey --dry-run --debug   # render + validate without applying
+helm install valkey ./valkey --dry-run --debug    # render + validate without applying
 helm install valkey ./valkey                      # actually install (e.g. on kind/minikube)
 helm test valkey                                  # run the chart's connection test pod
 helm uninstall valkey
