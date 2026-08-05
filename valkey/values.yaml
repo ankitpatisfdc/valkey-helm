@@ -8,11 +8,11 @@ image:
   # Image registry
   registry: "docker.io"
   # Valkey container image repository
-  repository: valkey/valkey
+  repository: valkey/valkey-bundle
   # Image pull policy (Always, IfNotPresent, Never)
   pullPolicy: IfNotPresent
   # Image tag (leave empty to use .Chart.AppVersion)
-  tag: ""
+  tag: "8.1.4"
 
 # List of image pull secrets (for private registries)
 imagePullSecrets: []
@@ -408,7 +408,7 @@ cluster:
   # "failover force", "nosave now"). Empty string omits the directive so the
   # server keeps its built-in default (save RDB, briefly wait for replicas).
   # Only rendered in cluster mode — `failover` is a Valkey Cluster concept.
-  shutdownOnSigterm: "failover"
+  shutdownOnSigterm: ""
 
   # Persistence configuration (required for cluster mode)
   persistence:

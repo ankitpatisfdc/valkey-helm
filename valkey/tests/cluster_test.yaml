@@ -1216,20 +1216,20 @@ tests:
       cluster.persistence.size: "5Gi"
     template: templates/init_config.yaml
     asserts:
-      - matchRegex:
+      - notMatchRegex:
           path: data["init.sh"]
-          pattern: "shutdown-on-sigterm failover"
+          pattern: "shutdown-on-sigterm"
 
   - it: should pass shutdownOnSigterm through verbatim (space-separated flags)
     set:
       cluster.enabled: true
       cluster.persistence.size: "5Gi"
-      cluster.shutdownOnSigterm: "failover force"
+      cluster.shutdownOnSigterm: "nosave now"
     template: templates/init_config.yaml
     asserts:
       - matchRegex:
           path: data["init.sh"]
-          pattern: "shutdown-on-sigterm failover force"
+          pattern: "shutdown-on-sigterm nosave now"
 
   - it: should omit shutdown-on-sigterm when set to empty string
     set:

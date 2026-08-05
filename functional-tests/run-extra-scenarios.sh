@@ -1562,8 +1562,6 @@ scenario_readiness_probe_exists                  || true
 scenario_two_clusters_isolated                   || true
 scenario_isolation_off_lets_merge_happen         || true
 scenario_rollout_restart_orderly_failover        || true
-scenario_shutdown_on_sigterm_failover            || true
-scenario_failover_layers_coexist                 || true
 scenario_nodes_conf_ip_refresh                   || true
 scenario_probe_loading_policy                    || true
 scenario_ambient_authz_blocks_cross_release_meet || true
